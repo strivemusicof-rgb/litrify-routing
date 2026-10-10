@@ -1,7 +1,7 @@
 # Litrify routing data
 
 Weekly build of car-routing files for **Latvia, Lithuania and Estonia**, used by the
-[Litrify](https://litrify.app) fuel app's trip planner.
+Litrify fuel app's trip planner.
 
 - Built by [`.github/workflows/build.yml`](.github/workflows/build.yml) every Monday with
   [OSRM](https://project-osrm.org/) v5.27.1 (car profile, multi-level Dijkstra).
