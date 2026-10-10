@@ -49,7 +49,8 @@ jobs:
 
       - name: Pack
         run: |
-          tar -C data -I 'zstd -19 -T0' -cf baltics-osrm.tar.zst .
+          sudo chown -R "$(id -u):$(id -g)" data   # the OSRM container writes files as root
+          tar -C data -I 'zstd -10 -T0' -cf baltics-osrm.tar.zst .
           ls -la baltics-osrm.tar.zst
 
       - name: Publish as the "latest" release
