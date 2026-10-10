@@ -1,0 +1,62 @@
+# Builds OSRM car-routing files for Latvia, Lithuania and Estonia and publishes them as the "latest" release.
+# The Litrify server (VPS) downloads that release weekly and serves routes on 127.0.0.1 only.
+name: Build Baltic routing data
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'   # Mondays 02:00 UTC (Geofabrik extracts are updated daily)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  OSRM_IMAGE: ghcr.io/project-osrm/osrm-backend:v5.27.1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Download OpenStreetMap extracts (Geofabrik)
+        run: |
+          for c in latvia lithuania estonia; do
+            curl -fsSL -A "litrify-routing (GitHub Actions)" -o "$c.osm.pbf" "https://download.geofabrik.de/europe/$c-latest.osm.pbf"
+          done
+          ls -la *.osm.pbf
+
+      - name: Merge into one Baltic map
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq osmium-tool zstd
+          mkdir data
+          osmium merge latvia.osm.pbf lithuania.osm.pbf estonia.osm.pbf -o data/baltics.osm.pbf
+
+      - name: Build car routing files (OSRM, multi-level Dijkstra)
+        run: |
+          docker run --rm -v "$PWD/data:/data" "$OSRM_IMAGE" osrm-extract -p /opt/car.lua /data/baltics.osm.pbf
+          docker run --rm -v "$PWD/data:/data" "$OSRM_IMAGE" osrm-partition /data/baltics.osrm
+          docker run --rm -v "$PWD/data:/data" "$OSRM_IMAGE" osrm-customize /data/baltics.osrm
+          rm data/baltics.osm.pbf
+
+      - name: Check a route (Riga → Vilnius)
+        run: |
+          docker run -d --name osrm -p 5000:5000 -v "$PWD/data:/data" "$OSRM_IMAGE" osrm-routed --algorithm mld /data/baltics.osrm
+          for i in $(seq 1 30); do curl -fs "http://127.0.0.1:5000/route/v1/driving/24.1052,56.9496;25.2797,54.6872?overview=false" -o route.json && break; sleep 2; done
+          cat route.json
+          python3 -c "import json; r=json.load(open('route.json'))['routes'][0]; assert 250000 < r['distance'] < 330000, r['distance']; print('Riga to Vilnius', round(r['distance']/1000), 'km')"
+          docker rm -f osrm
+
+      - name: Pack
+        run: |
+          tar -C data -I 'zstd -19 -T0' -cf baltics-osrm.tar.zst .
+          ls -la baltics-osrm.tar.zst
+
+      - name: Publish as the "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag -R "$GITHUB_REPOSITORY" || true
+          gh release create latest baltics-osrm.tar.zst -R "$GITHUB_REPOSITORY" \
+            --title "Baltic routing data $(date -u +%F)" \
+            --notes "OSRM car routing for Latvia, Lithuania and Estonia. Map data © OpenStreetMap contributors, ODbL (https://www.openstreetmap.org/copyright)."
